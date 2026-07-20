@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>玩具控制桥接</title>
+  <style>
+    body { font-family: system-ui; max-width: 500px; margin: 0 auto; padding: 20px; background: #111; color: #eee; }
+    button { width: 100%; padding: 14px; margin: 6px 0; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
+    .connect { background: #2a9d8f; color: #fff; }
+    .on { background: #e76f51; color: #fff; }
+    .off { background: #555; color: #fff; }
+    .level { background: #264653; color: #fff; }
+    .status { background: #1a1a1a; border: 1px solid #333; padding: 10px; border-radius: 8px; margin: 10px 0; font-size: 14px; }
+    select, input { width: 100%; padding: 10px; margin: 4px 0; border-radius: 6px; border: none; background: #222; color: #eee; font-size: 16px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; margin: 2px; }
+    .connected { background: #2a9d8f; }
+    .disconnected { background: #e76f51; }
+  </style>
+</head>
+<body>
+  <h2>🔗 羞羞哒漫游pro 桥接面板</h2>
+  <div class="status" id="statusDisplay">
+    蓝牙: <span id="bleStatus" class="badge disconnected">未连接</span><br>
+    服务器: <span id="serverStatus" class="badge disconnected">未连接</span><br>
+    当前档位: <span id="currentLevel">0</span>
+  </div>
+
+  <button class="connect" id="connectBtn">🔗 连接蓝牙设备</button>
+  <button class="on" id="onBtn">▶ 开启</button>
+  <button class="off" id="offBtn">⏹ 关闭</button>
+
+  <label>档位 (1-10):</label>
+  <input type="range" id="levelSlider" min="0" max="10" value="0">
+  <span id="levelDisplay">0</span>
+
+  <hr style="border-color:#333;margin:16px 0">
+
+  <h3>📋 远程指令日志</h3>
+  <div id="commandLog" style="font-size:12px;color:#888;max-height:200px;overflow-y:auto;"></div>
+
+  <script>
+    let device = null;
+    let service = null;
+    let writeChar = null;
+    let notifyChar = null;
+    let isConnected = false;
+    let pollInterval = null;
+
+    const SERVICE_UUID = '00000001-0000-1000-8000-00805f9b34fb';
+    const WRITE_UUID = '00000003-0000-1000-8000-00805f9b34fb';
+    const NOTIFY_UUID = '00000002-0000-1000-8000-00805f9b34fb';
+    const SERVER_URL = window.location.origin;
+
+    function log(msg) {
+      const el = document.getElementById('commandLog');
+      el.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}<br>` + el.innerHTML;
+    }
+
+    function updateStatus() {
+      document.getElementById('bleStatus').textContent = isConnected ? '已连接' : '未连接';
+      document.getElementById('bleStatus').className = 'badge ' + (isConnected ? 'connected' : 'disconnected');
+    }
+
+    document.getElementById('connectBtn').onclick = async () => {
+      try {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ services: [SERVICE_UUID] }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        const server = await device.gatt.connect();
+        service = await server.getPrimaryService(SERVICE_UUID);
+        writeChar = await service.getCharacteristic(WRITE_UUID);
+        notifyChar = await service.getCharacteristic(NOTIFY_UUID);
+
+        isConnected = true;
+        updateStatus();
+        log('✅ 蓝牙已连接: ' + device.name);
+        document.getElementById('connectBtn').textContent = '✅ 已连接';
+
+        if (notifyChar.properties.notify) {
+          await notifyChar.startNotifications();
+          notifyChar.addEventListener('characteristicvaluechanged', e => {
+            const val = new TextDecoder().decode(e.target.value);
+            log('📩 设备通知: ' + val);
+          });
+        }
+
+        device.addEventListener('gattserverdisconnected', () => {
+          isConnected = false;
+          updateStatus();
+          log('❌ 蓝牙断开');
+          document.getElementById('connectBtn').textContent = '🔗 连接蓝牙设备';
+        });
+
+      } catch(e) {
+        log('❌ 连接失败: ' + e.message);
+      }
+    };
+
+    async function sendBLE(data) {
+      if (!writeChar) {
+        log('⚠️ 未连接蓝牙');
+        return false;
+      }
+      try {
+        const encoder = new TextEncoder();
+        await writeChar.writeValue(encoder.encode(data));
+        log('📤 发送: ' + data);
+        return true;
+      } catch(e) {
+        log('❌ 发送失败: ' + e.message);
+        return false;
+      }
+    }
+
+    document.getElementById('levelSlider').oninput = function() {
+      document.getElementById('levelDisplay').textContent = this.value;
+      if (isConnected) {
+        sendBLE('LEVEL:' + this.value);
+        document.getElementById('currentLevel').textContent = this.value;
+      }
+    };
+
+    document.getElementById('onBtn').onclick = () => sendBLE('ON');
+    document.getElementById('offBtn').onclick = () => sendBLE('OFF');
+
+    async function pollServer() {
+      try {
+        const res = await fetch(SERVER_URL + '/pending');
+        const data = await res.json();
+        if (data.command) {
+          log('📡 收到远程指令: ' + data.command);
+          if (data.command === 'on') {
+            sendBLE('ON');
+            document.getE
