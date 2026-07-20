@@ -16,6 +16,7 @@ let toyState = {
 
 // 记录日志
 let log = [];
+let pendingCommand = null;
 
 // 主页
 app.get('/', (req, res) => {
@@ -79,6 +80,8 @@ app.post('/control', (req, res) => {
     }, duration * 1000);
   }
 
+  pendingCommand = { command, level, mode, duration, timestamp: new Date().toISOString() };
+  
   res.json({
     success: true,
     state: toyState,
@@ -94,4 +97,10 @@ app.get('/log', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`控制服务器运行中，端口: ${PORT}`);
+app.get('/pending', (req, res) => {
+  const cmd = pendingCommand;
+  pendingCommand = null;
+  res.json(cmd || { command: null });
 });
+
+app.use(express.static('public'));});
